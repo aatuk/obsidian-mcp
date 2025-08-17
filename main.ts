@@ -647,9 +647,60 @@ export default class HTTPMCPPlugin extends Plugin {
         newSectionContent +
         fileContent.substring(sectionEnd);
     } else if (target_type === "block") {
-      throw new Error("Block references not yet implemented");
+      // Find block with reference ID
+      const blockRegex = new RegExp(`([^\n]*?)\\s*\\^${target}\\s*$`, "m");
+      const match = fileContent.match(blockRegex);
+
+      if (!match) {
+        throw new Error(`Block reference not found: ^${target}`);
+      }
+
+      const blockStart = match.index!;
+      const blockEnd = blockStart + match[0].length;
+      const blockContent = match[1]; // Content without the ^id
+
+      let newBlockContent: string;
+      switch (operation) {
+        case "append":
+          newBlockContent = blockContent + content + ` ^${target}`;
+          break;
+        case "prepend":
+          newBlockContent = content + blockContent + ` ^${target}`;
+          break;
+        case "replace":
+          newBlockContent = content + ` ^${target}`;
+          break;
+        default:
+          throw new Error(`Invalid operation: ${operation}`);
+      }
+
+      fileContent =
+        fileContent.substring(0, blockStart) +
+        newBlockContent +
+        fileContent.substring(blockEnd);
     } else if (target_type === "frontmatter") {
-      throw new Error("Frontmatter patching not yet implemented");
+      // Use Obsidian's processFrontMatter API for safe YAML handling
+      await this.app.fileManager.processFrontMatter(
+        file as any,
+        (frontmatter) => {
+          const keys = target.split("."); // Support nested keys like "meta.author"
+
+          switch (operation) {
+            case "replace":
+              this.setNestedValue(frontmatter, keys, content);
+              break;
+            case "append":
+              this.appendNestedValue(frontmatter, keys, content);
+              break;
+            case "prepend":
+              this.prependNestedValue(frontmatter, keys, content);
+              break;
+            default:
+              throw new Error(`Invalid operation: ${operation}`);
+          }
+        },
+      );
+      return; // processFrontMatter handles the file write
     } else {
       throw new Error(`Invalid target type: ${target_type}`);
     }
@@ -845,6 +896,95 @@ export default class HTTPMCPPlugin extends Plugin {
         error: error.message,
         stack: error.stack,
       };
+    }
+  }
+
+  // Helper functions for nested frontmatter value handling
+  private tryParseValue(value: string): any {
+    // Try to parse the value as JSON first
+    try {
+      return JSON.parse(value);
+    } catch {
+      // Not JSON, try other types
+      if (value === "true") return true;
+      if (value === "false") return false;
+      if (value === "null") return null;
+      if (value === "undefined") return undefined;
+
+      // Try to parse as number
+      const num = Number(value);
+      if (!isNaN(num) && value.trim() !== "") return num;
+
+      // Return as string
+      return value;
+    }
+  }
+
+  private setNestedValue(obj: any, keys: string[], value: string): void {
+    const parsedValue = this.tryParseValue(value);
+
+    if (keys.length === 1) {
+      obj[keys[0]] = parsedValue;
+    } else {
+      const key = keys[0];
+      if (!obj[key] || typeof obj[key] !== "object") {
+        obj[key] = {};
+      }
+      this.setNestedValue(obj[key], keys.slice(1), value);
+    }
+  }
+
+  private appendNestedValue(obj: any, keys: string[], value: string): void {
+    const parsedValue = this.tryParseValue(value);
+
+    if (keys.length === 1) {
+      const key = keys[0];
+      const existing = obj[key];
+
+      if (Array.isArray(existing)) {
+        // If it's an array, add the new value
+        existing.push(parsedValue);
+      } else if (typeof existing === "string") {
+        // If it's a string, concatenate
+        obj[key] = existing + parsedValue;
+      } else {
+        // Otherwise, create an array with both values
+        obj[key] =
+          existing !== undefined ? [existing, parsedValue] : parsedValue;
+      }
+    } else {
+      const key = keys[0];
+      if (!obj[key] || typeof obj[key] !== "object") {
+        obj[key] = {};
+      }
+      this.appendNestedValue(obj[key], keys.slice(1), value);
+    }
+  }
+
+  private prependNestedValue(obj: any, keys: string[], value: string): void {
+    const parsedValue = this.tryParseValue(value);
+
+    if (keys.length === 1) {
+      const key = keys[0];
+      const existing = obj[key];
+
+      if (Array.isArray(existing)) {
+        // If it's an array, add the new value at the beginning
+        existing.unshift(parsedValue);
+      } else if (typeof existing === "string") {
+        // If it's a string, prepend
+        obj[key] = parsedValue + existing;
+      } else {
+        // Otherwise, create an array with both values
+        obj[key] =
+          existing !== undefined ? [parsedValue, existing] : parsedValue;
+      }
+    } else {
+      const key = keys[0];
+      if (!obj[key] || typeof obj[key] !== "object") {
+        obj[key] = {};
+      }
+      this.prependNestedValue(obj[key], keys.slice(1), value);
     }
   }
 
