@@ -160,3 +160,6 @@ devenv.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# API Keys
+*.key

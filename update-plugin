@@ -1,4 +1,15 @@
 #!/bin/sh
+# Usage: ./update-plugin [vault-name]
+# Default to "Synced vault" if no parameter provided
+VAULT="${1:-Synced vault}"
+
 npm run build
-cp main.js ~/Documents/Synced\ vault/.obsidian/plugins/obsidian-http-mcp/
-cp manifest.json ~/Documents/Synced\ vault/.obsidian/plugins/obsidian-http-mcp/
+
+# Create plugin directory if it doesn't exist
+mkdir -p ~/Documents/"$VAULT"/.obsidian/plugins/obsidian-http-mcp/
+
+# Copy files
+cp main.js ~/Documents/"$VAULT"/.obsidian/plugins/obsidian-http-mcp/
+cp manifest.json ~/Documents/"$VAULT"/.obsidian/plugins/obsidian-http-mcp/
+
+echo "Plugin updated for vault: $VAULT"

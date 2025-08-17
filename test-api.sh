@@ -1,6 +1,11 @@
 #!/bin/sh
 
-API_KEY="${API_KEY:-test-key-123}"
+# Try to read from key file if exists, otherwise use environment variable or default
+if [ -f "OBSIDIAN_API_KEY.key" ]; then
+    API_KEY=$(cat OBSIDIAN_API_KEY.key)
+else
+    API_KEY="${API_KEY:-test-key-123}"
+fi
 BASE_URL="${BASE_URL:-http://localhost:27125}"
 
 echo "Testing HTTP MCP Server at $BASE_URL"
