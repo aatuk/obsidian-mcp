@@ -48,6 +48,14 @@
     prettier = {
       enable = true;
       excludes = [ "main\\.js" ".*\\.md" ];
+      # Run prettier and auto-stage the formatted files
+      # This prevents the "files were modified by this hook" error
+      entry = lib.mkForce "${pkgs.writeShellScript "prettier-auto-stage" ''
+        #!/usr/bin/env bash
+        files=("$@")
+        ${pkgs.prettier}/bin/prettier --write "''${files[@]}"
+        git add "''${files[@]}"
+      ''}";
     };
   };
 }

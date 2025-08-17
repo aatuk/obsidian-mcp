@@ -1,8 +1,15 @@
 # Obsidian MCP Plugin Project
 
+## 🔴 CRITICAL: First Action Required
+**YOU MUST** immediately read the vault instructions by running:
+```
+mcp__obsidian-vault__get_file_contents("CLAUDE.md")
+```
+Then follow the "On Session Start" instructions found there.
+
 ## Quick Start
 You have access to an Obsidian vault via the MCP server `obsidian-vault`. 
-**Start by reading**: `CLAUDE.md` in the vault root using the MCP server.
+The vault contains all project context, tasks, and session history.
 
 ## Project Overview
 This is an Obsidian plugin that provides an HTTP-based MCP (Model Context Protocol) server, 
