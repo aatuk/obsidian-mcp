@@ -1,0 +1,4 @@
+#!/bin/sh
+npm run build
+cp main.js ~/Documents/Synced\ vault/.obsidian/plugins/obsidian-http-mcp/
+cp manifest.json ~/Documents/Synced\ vault/.obsidian/plugins/obsidian-http-mcp/
