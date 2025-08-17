@@ -732,6 +732,7 @@ export default class HTTPMCPPlugin extends Plugin {
     if (!dataview) {
       return {
         valid: false,
+        syntaxValid: false,
         error: "Dataview plugin is not installed or enabled",
       };
     }
@@ -743,6 +744,7 @@ export default class HTTPMCPPlugin extends Plugin {
         const result = eval(`(function() { return ${query}; })()`);
         return {
           valid: true,
+          syntaxValid: true,
           type: "JS",
           result: result,
           resultType: typeof result,
@@ -750,18 +752,95 @@ export default class HTTPMCPPlugin extends Plugin {
       } else {
         // For DQL queries, use the standard query method
         const result = await dataview.query(query);
+
+        // Check if query has results
+        let hasResults = false;
+        let resultCount = 0;
+
+        if (result.successful && result.value) {
+          // Use the type from the result value itself or from the result
+          const queryType = result.value.type || result.type;
+
+          if (queryType === "table" || result.value.headers) {
+            // For tables, check the values array
+            if (
+              result.value &&
+              result.value.values &&
+              Array.isArray(result.value.values)
+            ) {
+              hasResults = result.value.values.length > 0;
+              resultCount = result.value.values.length;
+            } else if (result.value && Array.isArray(result.value)) {
+              // Sometimes the value itself is the array for tables
+              hasResults = result.value.length > 0;
+              resultCount = result.value.length;
+            }
+          } else if (
+            queryType === "list" ||
+            (result.value.values && !result.value.headers)
+          ) {
+            // For lists, check the values array
+            if (result.value.values && Array.isArray(result.value.values)) {
+              hasResults = result.value.values.length > 0;
+              resultCount = result.value.values.length;
+            }
+          } else if (queryType === "task" || result.value.tasks) {
+            // For tasks, check the tasks array
+            if (result.value.tasks && Array.isArray(result.value.tasks)) {
+              hasResults = result.value.tasks.length > 0;
+              resultCount = result.value.tasks.length;
+            }
+          } else if (Array.isArray(result.value)) {
+            // Direct array result
+            hasResults = result.value.length > 0;
+            resultCount = result.value.length;
+          } else {
+            // For other types, be conservative - only count as having results if we're sure
+            hasResults = false;
+            resultCount = 0;
+          }
+        }
+
+        // Detect potential issues with field names
+        let warning = null;
+        if (result.successful && !hasResults) {
+          // Check for common patterns that suggest invalid field names
+          const fieldPattern =
+            /\b(INVALID_FIELD|nonexistent_field|undefined)\b/i;
+          const wherePattern = /WHERE\s+(\w+)\s*[=!<>]/;
+
+          if (fieldPattern.test(query)) {
+            warning = "Query contains potentially invalid field names";
+          } else if (wherePattern.test(query)) {
+            const match = query.match(wherePattern);
+            if (match && match[1]) {
+              warning = `Query returned no results. Field '${match[1]}' might not exist or have no matching values`;
+            } else {
+              warning =
+                "Query returned no results. Check field names and filter conditions";
+            }
+          } else {
+            warning = "Query returned no results";
+          }
+        }
+
         return {
-          valid: result.successful,
+          valid: result.successful && (!warning || hasResults),
+          syntaxValid: result.successful,
           type: "DQL",
           successful: result.successful,
+          hasResults: hasResults,
+          resultCount: resultCount,
           result: result.successful ? result.value : null,
           resultType: result.type,
           error: result.successful ? null : result.error,
+          warning: warning,
         };
       }
     } catch (error: any) {
       return {
         valid: false,
+        syntaxValid: false,
         type: type,
         error: error.message,
         stack: error.stack,
@@ -778,69 +857,132 @@ export default class HTTPMCPPlugin extends Plugin {
     const content = await this.app.vault.read(file as any);
     const dataview = (this.app as any).plugins?.plugins?.dataview?.api;
 
-    // Extract and execute dataview queries
-    const dataviewResults: any = {};
+    // Track query statuses and results
+    const queryStatuses: any = {};
+    let renderedMarkdown = content;
+    let hasErrors = false;
 
     if (dataview) {
-      // Find DQL code blocks
+      // Process DQL code blocks
       const dqlRegex = /```dataview\n([\s\S]*?)```/g;
+      const dqlMatches: Array<{ match: string; query: string; index: number }> =
+        [];
+
       let match;
       while ((match = dqlRegex.exec(content)) !== null) {
-        const query = match[1].trim();
+        dqlMatches.push({
+          match: match[0],
+          query: match[1].trim(),
+          index: match.index,
+        });
+      }
+
+      // Replace queries with their markdown results (in reverse order to preserve indices)
+      for (let i = dqlMatches.length - 1; i >= 0; i--) {
+        const { match: fullMatch, query } = dqlMatches[i];
         try {
-          const result = await dataview.query(query);
-          dataviewResults[query] = {
-            successful: result.successful,
-            type: result.type,
-            value: result.successful ? result.value : null,
-            error: result.successful ? null : result.error,
-          };
+          // Use queryMarkdown to get formatted markdown results
+          const result = await dataview.queryMarkdown(query);
+
+          if (result.successful) {
+            // Replace the dataview code block with the rendered markdown
+            const replacement = result.value || "*(No results)*";
+            renderedMarkdown = renderedMarkdown.replace(fullMatch, replacement);
+
+            // Count results
+            let resultCount = 0;
+            if (result.value) {
+              const lines = result.value
+                .split("\n")
+                .filter((line: string) => line.trim());
+              resultCount = lines.length;
+            }
+
+            queryStatuses[query] = {
+              success: true,
+              resultCount: resultCount,
+              type: "DQL",
+            };
+          } else {
+            // Keep the code block but add error message
+            const errorMsg = `\n> ⚠️ **Query Error**: ${result.error}\n`;
+            renderedMarkdown = renderedMarkdown.replace(
+              fullMatch,
+              fullMatch + errorMsg,
+            );
+            queryStatuses[query] = {
+              success: false,
+              error: result.error,
+              type: "DQL",
+            };
+            hasErrors = true;
+          }
         } catch (error: any) {
-          dataviewResults[query] = {
-            successful: false,
+          // Keep the code block but add error message
+          const errorMsg = `\n> ⚠️ **Query Error**: ${error.message}\n`;
+          renderedMarkdown = renderedMarkdown.replace(
+            fullMatch,
+            fullMatch + errorMsg,
+          );
+          queryStatuses[query] = {
+            success: false,
             error: error.message,
+            type: "DQL",
           };
+          hasErrors = true;
         }
       }
 
-      // Find inline DQL
+      // Process inline queries
       const inlineDqlRegex = /`\$=\s*(.*?)`/g;
+      const inlineMatches: Array<{ match: string; query: string }> = [];
+
       while ((match = inlineDqlRegex.exec(content)) !== null) {
-        const query = match[1].trim();
+        inlineMatches.push({
+          match: match[0],
+          query: match[1].trim(),
+        });
+      }
+
+      for (const { match: fullMatch, query } of inlineMatches) {
         try {
           // Inline queries are JavaScript expressions
           const dv = dataview;
           const result = eval(`(function() { return ${query}; })()`);
-          dataviewResults[`inline: ${query}`] = {
-            successful: true,
-            type: "inline",
+
+          // Replace inline query with its result
+          renderedMarkdown = renderedMarkdown.replace(
+            fullMatch,
+            String(result),
+          );
+          queryStatuses[`inline: ${query}`] = {
+            success: true,
             value: result,
+            type: "inline",
           };
         } catch (error: any) {
-          dataviewResults[`inline: ${query}`] = {
-            successful: false,
+          // Keep the inline query but add error indicator
+          renderedMarkdown = renderedMarkdown.replace(
+            fullMatch,
+            `${fullMatch} ⚠️`,
+          );
+          queryStatuses[`inline: ${query}`] = {
+            success: false,
             error: error.message,
+            type: "inline",
           };
+          hasErrors = true;
         }
       }
     }
 
-    // Use Obsidian's markdown rendering (simplified version)
-    // For a full render, we'd need to create a component and use MarkdownRenderer
-    const renderedHtml = content
-      .replace(/^# (.*)/gm, "<h1>$1</h1>")
-      .replace(/^## (.*)/gm, "<h2>$1</h2>")
-      .replace(/^### (.*)/gm, "<h3>$1</h3>")
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.*?)\*/g, "<em>$1</em>")
-      .replace(/\[\[(.*?)\]\]/g, '<a href="$1">$1</a>');
-
     return {
       filepath: filepath,
       rawContent: content,
-      renderedHtml: renderedHtml,
-      dataviewResults: dataviewResults,
-      hasDataview: Object.keys(dataviewResults).length > 0,
+      renderedMarkdown: renderedMarkdown,
+      queryStatuses: queryStatuses,
+      hasErrors: hasErrors,
+      hasDataview: Object.keys(queryStatuses).length > 0,
     };
   }
 }
