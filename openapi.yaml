@@ -1,0 +1,391 @@
+openapi: 3.1.0
+info:
+  title: Obsidian Vault API
+  description: REST API for accessing and managing Obsidian vault content through MCP server
+  version: 1.0.0
+servers:
+  - url: https://acausalcompassion.org/obsidian-mcp/{apiKey}
+    description: Production server with path-based authentication
+    variables:
+      apiKey:
+        default: your-api-key
+        description: API key for authentication (embedded in path)
+
+paths:
+  /api/files:
+    get:
+      summary: List files in vault
+      description: Returns a list of all files in the vault or in a specific directory
+      operationId: listFiles
+      parameters:
+        - name: path
+          in: query
+          description: Directory path to list files from (optional)
+          required: false
+          schema:
+            type: string
+            example: "llm-notes/tasks"
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                example: ["file1.md", "file2.md", "folder/file3.md"]
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/files/{filepath}:
+    get:
+      summary: Get file contents
+      description: Returns the contents of a specific file
+      operationId: getFileContents
+      parameters:
+        - name: filepath
+          in: path
+          description: Path to the file
+          required: true
+          schema:
+            type: string
+            example: "llm-notes/tasks/task.md"
+      responses:
+        "200":
+          description: File contents
+          content:
+            application/json:
+              schema:
+                type: string
+                example: "# Task Title\n\nTask content here..."
+        "404":
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      summary: Append content to file
+      description: Appends content to an existing file or creates a new one
+      operationId: appendContent
+      parameters:
+        - name: filepath
+          in: path
+          description: Path to the file
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  description: Content to append
+                  example: "\n## New Section\n\nAdditional content"
+      responses:
+        "200":
+          description: Content appended successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Content appended"
+
+    delete:
+      summary: Delete file
+      description: Deletes a file from the vault
+      operationId: deleteFile
+      parameters:
+        - name: filepath
+          in: path
+          description: Path to the file to delete
+          required: true
+          schema:
+            type: string
+        - name: confirm
+          in: query
+          description: Confirmation flag (must be true)
+          required: true
+          schema:
+            type: boolean
+            example: true
+      responses:
+        "200":
+          description: File deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "File deleted"
+        "400":
+          description: Missing confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/search:
+    post:
+      summary: Search vault
+      description: Search for text across all files in the vault
+      operationId: searchVault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: Search query
+                  example: "TODO"
+                context_length:
+                  type: integer
+                  description: Number of characters of context to return
+                  default: 100
+                  example: 150
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    file:
+                      type: string
+                      description: File path
+                      example: "llm-notes/tasks/task.md"
+                    match:
+                      type: string
+                      description: Matching text with context
+                      example: "...context before TODO: implement feature context after..."
+                    position:
+                      type: integer
+                      description: Character position in file
+                      example: 142
+
+  /api/patch:
+    patch:
+      summary: Patch content
+      description: Modify specific sections of a file (headings, blocks, frontmatter)
+      operationId: patchContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filepath
+                - operation
+                - target_type
+                - target
+                - content
+              properties:
+                filepath:
+                  type: string
+                  description: Path to the file
+                  example: "llm-notes/tasks/task.md"
+                operation:
+                  type: string
+                  enum: [append, prepend, replace]
+                  description: Operation to perform
+                  example: "replace"
+                target_type:
+                  type: string
+                  enum: [heading, block, frontmatter]
+                  description: Type of target to patch
+                  example: "frontmatter"
+                target:
+                  type: string
+                  description: Target identifier (heading text, block ID, or frontmatter field)
+                  example: "status"
+                content:
+                  type: string
+                  description: Content to patch
+                  example: "completed"
+      responses:
+        "200":
+          description: Content patched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Content patched"
+
+  /api/dataview:
+    post:
+      summary: Execute Dataview query
+      description: Execute a Dataview DQL query (requires Dataview plugin)
+      operationId: executeDataview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: Dataview DQL query
+                  example: 'TABLE status FROM "llm-notes/tasks" WHERE priority = "high"'
+      responses:
+        "200":
+          description: Query results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [table, list, task]
+                    example: "table"
+                  headers:
+                    type: array
+                    items:
+                      type: string
+                    example: ["File", "status"]
+                  values:
+                    type: array
+                    description: Query result data
+                  idMeaning:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        example: "path"
+
+  /api/dataview/validate:
+    post:
+      summary: Validate Dataview query
+      description: Validate a Dataview query and return results or errors
+      operationId: validateDataview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: Dataview query to validate
+                  example: 'TABLE status FROM "llm-notes/tasks"'
+                type:
+                  type: string
+                  enum: [DQL, JS]
+                  default: DQL
+                  description: Query type
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                    example: true
+                  result:
+                    type: object
+                    description: Query results if valid
+                  error:
+                    type: string
+                    description: Error message if invalid
+
+  /api/render:
+    post:
+      summary: Get rendered content
+      description: Get the rendered HTML content of a note including Dataview query results
+      operationId: getRenderedContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filepath
+              properties:
+                filepath:
+                  type: string
+                  description: Path to the file to render
+                  example: "llm-notes/dashboard.md"
+      responses:
+        "200":
+          description: Rendered content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+                    description: Rendered markdown/HTML content
+                    example: "# Dashboard\n\n## Tasks\n\n- [ ] Task 1\n- [x] Task 2"
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Unauthorized"
+        message:
+          type: string
+          description: Additional details
+          example: "Invalid API key"
+
+  securitySchemes:
+    pathApiKey:
+      type: apiKey
+      in: path
+      name: apiKey
+      description: API key embedded in URL path
+
+security:
+  - pathApiKey: []

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "obsidian-http-mcp": {
+      "type": "sse",
+      "url": "http://localhost:27125/rpc",
+      "headers": {
+        "X-API-Key": "test-key-123",
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}

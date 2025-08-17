@@ -1,0 +1,10 @@
+{
+  "obsidian-vault": {
+    "command": "node",
+    "args": ["/home/aatu/projects/obsidian-mcp/mcp-http-bridge.js"],
+    "env": {
+      "OBSIDIAN_MCP_URL": "http://localhost:27125",
+      "OBSIDIAN_MCP_API_KEY": "test-key-123"
+    }
+  }
+}

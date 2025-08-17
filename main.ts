@@ -160,6 +160,11 @@ export default class HTTPMCPPlugin extends Plugin {
       return;
     }
 
+    // Handle REST API endpoints
+    if (req.url?.startsWith("/api/")) {
+      return this.handleRestApi(req, res);
+    }
+
     if (req.method !== "POST" || req.url !== "/rpc") {
       res.writeHead(404);
       res.end(JSON.stringify({ error: "Not found" }));
@@ -275,6 +280,143 @@ export default class HTTPMCPPlugin extends Plugin {
       req.on("end", () => resolve(body));
       req.on("error", reject);
     });
+  }
+
+  private async handleRestApi(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
+    const url = req.url || "";
+    const method = req.method || "";
+
+    // Update CORS headers for REST API
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PATCH, DELETE, OPTIONS",
+    );
+
+    try {
+      // Parse URL path - handle both /api/... and direct api/... (from nginx proxy)
+      const pathMatch = url.match(/^\/?(api\/.*)$/);
+      if (!pathMatch) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: "API endpoint not found" }));
+        return;
+      }
+
+      const fullApiPath = pathMatch[1];
+      const apiPath = fullApiPath.startsWith("api/")
+        ? fullApiPath.substring(4)
+        : fullApiPath;
+
+      // Route to appropriate handler
+      if (apiPath === "files" && method === "GET") {
+        // List files in vault
+        const urlParams = new URL(url, `http://${req.headers.host}`);
+        const path = urlParams.searchParams.get("path") || "";
+
+        const result = path
+          ? await this.listFilesInDir(path)
+          : await this.listFilesInVault();
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else if (apiPath.startsWith("files/") && method === "GET") {
+        // Get file contents
+        const filepath = apiPath.substring(6); // Remove "files/" prefix
+        const result = await this.getFileContents(filepath);
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else if (apiPath.startsWith("files/") && method === "POST") {
+        // Append content to file
+        const filepath = apiPath.substring(6);
+        const body = await this.readBody(req);
+        const { content } = JSON.parse(body);
+
+        await this.appendContent(filepath, content);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, message: "Content appended" }));
+      } else if (apiPath === "search" && method === "POST") {
+        // Search vault
+        const body = await this.readBody(req);
+        const { query, context_length = 100 } = JSON.parse(body);
+
+        const result = await this.simpleSearch(query, context_length);
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else if (apiPath === "patch" && method === "PATCH") {
+        // Patch content
+        const body = await this.readBody(req);
+        const params = JSON.parse(body);
+
+        await this.patchContent(params);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, message: "Content patched" }));
+      } else if (apiPath.startsWith("files/") && method === "DELETE") {
+        // Delete file
+        const filepath = apiPath.substring(6);
+        const urlParams = new URL(url, `http://${req.headers.host}`);
+        const confirm = urlParams.searchParams.get("confirm") === "true";
+
+        if (!confirm) {
+          res.writeHead(400);
+          res.end(
+            JSON.stringify({
+              error: "Deletion requires confirm=true parameter",
+            }),
+          );
+          return;
+        }
+
+        await this.deleteFile(filepath, true);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, message: "File deleted" }));
+      } else if (apiPath === "dataview" && method === "POST") {
+        // Execute Dataview query
+        const body = await this.readBody(req);
+        const { query } = JSON.parse(body);
+
+        const result = await this.dataviewQuery(query);
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else if (apiPath === "dataview/validate" && method === "POST") {
+        // Validate Dataview query
+        const body = await this.readBody(req);
+        const { query, type = "DQL" } = JSON.parse(body);
+
+        const result = await this.validateDataviewQuery(query, type);
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else if (apiPath === "render" && method === "POST") {
+        // Get rendered content
+        const body = await this.readBody(req);
+        const { filepath } = JSON.parse(body);
+
+        const result = await this.getRenderedContent(filepath);
+
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } else {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: "API endpoint not found" }));
+      }
+    } catch (error: any) {
+      console.error("REST API error:", error);
+      res.writeHead(500);
+      res.end(
+        JSON.stringify({
+          error: "Internal server error",
+          message: error.message,
+        }),
+      );
+    }
   }
 
   private async executeMethod(method: string, params: any): Promise<any> {
