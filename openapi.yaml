@@ -1,15 +1,19 @@
 openapi: 3.1.0
 info:
   title: Obsidian Vault API
-  description: REST API for accessing and managing Obsidian vault content through MCP server
+  description: |
+    REST API for accessing and managing Obsidian vault content through MCP server.
+
+    **Authentication**: All endpoints require an API key passed via the `X-API-Key` header.
+
+    **Base URL**: `https://acausalcompassion.org/obsidian-mcp`
+
+    This API provides full access to your Obsidian vault including reading files, 
+    searching content, executing Dataview queries, and modifying notes.
   version: 1.0.0
 servers:
-  - url: https://acausalcompassion.org/obsidian-mcp/{apiKey}
-    description: Production server with path-based authentication
-    variables:
-      apiKey:
-        default: your-api-key
-        description: API key for authentication (embedded in path)
+  - url: https://acausalcompassion.org/obsidian-mcp
+    description: Production server with X-API-Key header authentication
 
 paths:
   /api/files:
@@ -36,7 +40,7 @@ paths:
                   type: string
                 example: ["file1.md", "file2.md", "folder/file3.md"]
         "401":
-          description: Unauthorized
+          description: Unauthorized - Missing or invalid X-API-Key header
           content:
             application/json:
               schema:
@@ -381,11 +385,11 @@ components:
           example: "Invalid API key"
 
   securitySchemes:
-    pathApiKey:
+    apiKeyHeader:
       type: apiKey
-      in: path
-      name: apiKey
-      description: API key embedded in URL path
+      in: header
+      name: X-API-Key
+      description: API key for authentication passed as HTTP header
 
 security:
-  - pathApiKey: []
+  - apiKeyHeader: []

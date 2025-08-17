@@ -59,19 +59,35 @@ Or paste the contents of `openapi.yaml` directly.
 
 ### 4. Configure Authentication
 
-Since we use path-based authentication, set:
-- **Authentication**: None
-- The API key is embedded in the server URL
+You have two options for authentication:
 
-### 5. Set the Server URL
+#### Option A: Header Authentication (Recommended)
+ChatGPT Custom GPTs support API key headers:
 
-In the action configuration, update the server URL with your actual API key:
+1. In the action configuration, set:
+   - **Authentication**: API Key  
+   - **Auth Type**: Custom
+   - **Custom Header Name**: `X-API-Key`
+   - **API Key**: Your actual API key from `OBSIDIAN_API_KEY.key`
 
-```
-https://acausalcompassion.org/obsidian-mcp/YOUR_ACTUAL_API_KEY_HERE
-```
+2. Set the **Server URL**:
+   ```
+   https://acausalcompassion.org/obsidian-mcp
+   ```
 
-Replace `YOUR_ACTUAL_API_KEY_HERE` with your actual API key from `OBSIDIAN_API_KEY.key`.
+**Note**: This requires the nginx configuration to be updated with header passthrough.
+
+#### Option B: Path-Based Authentication (Currently Working)
+If header auth isn't working yet:
+
+1. Set **Authentication**: None
+2. Embed the API key in the **Server URL**:
+   ```
+   https://acausalcompassion.org/obsidian-mcp/YOUR_API_KEY_HERE
+   ```
+   Replace `YOUR_API_KEY_HERE` with your actual key.
+
+The header approach is more secure as it doesn't expose the key in URLs!
 
 ### 6. Test the Connection
 
