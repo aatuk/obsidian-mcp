@@ -47,7 +47,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /obsidian-mcp/api/files/{filepath}:
+  /obsidian-mcp/api/files/content:
     get:
       summary: Get file contents
       description: Returns the contents of a specific file
@@ -55,7 +55,7 @@ paths:
       x-openai-isConsequential: false
       parameters:
         - name: filepath
-          in: path
+          in: query
           description: Path to the file
           required: true
           schema:
@@ -76,18 +76,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /obsidian-mcp/api/files/append:
     post:
       summary: Append content to file
       description: Appends content to an existing file or creates a new one
       operationId: appendContent
       x-openai-isConsequential: false
-      parameters:
-        - name: filepath
-          in: path
-          description: Path to the file
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
@@ -95,8 +89,13 @@ paths:
             schema:
               type: object
               required:
+                - filepath
                 - content
               properties:
+                filepath:
+                  type: string
+                  description: Path to the file
+                  example: "llm-notes/tasks/task.md"
                 content:
                   type: string
                   description: Content to append
@@ -116,25 +115,30 @@ paths:
                     type: string
                     example: "Content appended"
 
-    delete:
+  /obsidian-mcp/api/files/delete:
+    post:
       summary: Delete file
       description: Deletes a file from the vault
       operationId: deleteFile
       x-openai-isConsequential: false
-      parameters:
-        - name: filepath
-          in: path
-          description: Path to the file to delete
-          required: true
-          schema:
-            type: string
-        - name: confirm
-          in: query
-          description: Confirmation flag (must be true)
-          required: true
-          schema:
-            type: boolean
-            example: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filepath
+                - confirm
+              properties:
+                filepath:
+                  type: string
+                  description: Path to the file to delete
+                  example: "llm-notes/tasks/task.md"
+                confirm:
+                  type: boolean
+                  description: Confirmation flag (must be true)
+                  example: true
       responses:
         "200":
           description: File deleted successfully
@@ -204,9 +208,9 @@ paths:
                       example: 142
 
   /obsidian-mcp/api/patch:
-    patch:
+    post:
       summary: Patch content
-      description: Modify specific sections of a file (headings, blocks, frontmatter)
+      description: Modify specific sections of a file (headings, blocks, frontmatter) without replacing the entire content.
       operationId: patchContent
       x-openai-isConsequential: false
       requestBody:
@@ -229,21 +233,37 @@ paths:
                 operation:
                   type: string
                   enum: [append, prepend, replace]
-                  description: Operation to perform
+                  description: |
+                    Operation to perform:
+                    - replace: Replace the entire target content
+                    - append: Add content at the end
+                    - prepend: Add content at the beginning
                   example: "replace"
                 target_type:
                   type: string
                   enum: [heading, block, frontmatter]
-                  description: Type of target to patch
-                  example: "frontmatter"
+                  description: |
+                    Type of target to patch:
+                    - heading: Content under a markdown heading
+                    - block: Block with reference ID (^blockid)
+                    - frontmatter: YAML frontmatter field
+                  example: "heading"
                 target:
                   type: string
-                  description: Target identifier (heading text, block ID, or frontmatter field)
-                  example: "status"
+                  description: |
+                    Target identifier:
+                    - For heading: The heading text (without # symbols)
+                    - For block: The block ID (without ^ symbol)
+                    - For frontmatter: Field name (supports dot notation for nested fields)
+                  example: "Introduction"
                 content:
                   type: string
-                  description: Content to patch
-                  example: "completed"
+                  description: |
+                    Content to insert. IMPORTANT:
+                    - For headings: Section content ONLY, do NOT include the heading itself
+                    - For blocks: Block content ONLY, do NOT include the ^blockid (preserved automatically)
+                    - For frontmatter: Value to set (auto-parsed to correct type)
+                  example: "\nThis is the new section content.\n"
       responses:
         "200":
           description: Content patched successfully

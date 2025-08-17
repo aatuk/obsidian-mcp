@@ -7,6 +7,8 @@ interface HTTPMCPSettings {
   enableExternalAccess: boolean;
   enableDataviewQueries: boolean;
   rateLimitPerMinute: number;
+  enableOpenAPISchema: boolean;
+  openAPISchemaPath: string;
 }
 
 const DEFAULT_SETTINGS: HTTPMCPSettings = {
@@ -15,6 +17,8 @@ const DEFAULT_SETTINGS: HTTPMCPSettings = {
   enableExternalAccess: false,
   enableDataviewQueries: true,
   rateLimitPerMinute: 60,
+  enableOpenAPISchema: true,
+  openAPISchemaPath: "openapi.yaml",
 };
 
 export default class HTTPMCPPlugin extends Plugin {
@@ -123,7 +127,7 @@ export default class HTTPMCPPlugin extends Plugin {
   ) {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
       "Content-Type, X-API-Key, Authorization",
@@ -133,6 +137,11 @@ export default class HTTPMCPPlugin extends Plugin {
       res.writeHead(200);
       res.end();
       return;
+    }
+
+    // Handle OpenAPI schema endpoint (no auth required)
+    if (req.url === "/api/schema" && this.settings.enableOpenAPISchema) {
+      return this.handleSchemaRequest(req, res);
     }
 
     // Support both X-API-Key and Authorization: Bearer token
@@ -293,6 +302,53 @@ export default class HTTPMCPPlugin extends Plugin {
     });
   }
 
+  private async handleSchemaRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
+    try {
+      // Try to read the schema file from the vault
+      const schemaFile = this.app.vault.getAbstractFileByPath(
+        this.settings.openAPISchemaPath,
+      );
+
+      if (!schemaFile || schemaFile.hasOwnProperty("children")) {
+        res.writeHead(404);
+        res.end(
+          JSON.stringify({
+            error: "Schema file not found",
+            path: this.settings.openAPISchemaPath,
+          }),
+        );
+        return;
+      }
+
+      const schemaContent = await this.app.vault.read(schemaFile as any);
+
+      // Determine content type based on file extension
+      const isYaml =
+        this.settings.openAPISchemaPath.endsWith(".yaml") ||
+        this.settings.openAPISchemaPath.endsWith(".yml");
+
+      res.setHeader(
+        "Content-Type",
+        isYaml ? "application/x-yaml" : "application/json",
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.writeHead(200);
+      res.end(schemaContent);
+    } catch (error: any) {
+      console.error("Error serving OpenAPI schema:", error);
+      res.writeHead(500);
+      res.end(
+        JSON.stringify({
+          error: "Failed to read schema file",
+          message: error.message,
+        }),
+      );
+    }
+  }
+
   private async handleRestApi(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -301,14 +357,13 @@ export default class HTTPMCPPlugin extends Plugin {
     const method = req.method || "";
 
     // Update CORS headers for REST API
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PATCH, DELETE, OPTIONS",
-    );
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
     try {
       // Parse URL path - handle both /api/... and direct api/... (from nginx proxy)
-      const pathMatch = url.match(/^\/?(api\/.*)$/);
+      // Split off query string first
+      const urlPath = url.split("?")[0];
+      const pathMatch = urlPath.match(/^\/?(api\/.*)$/);
       if (!pathMatch) {
         res.writeHead(404);
         res.end(JSON.stringify({ error: "API endpoint not found" }));
@@ -321,9 +376,10 @@ export default class HTTPMCPPlugin extends Plugin {
         : fullApiPath;
 
       // Route to appropriate handler
+      const urlParams = new URL(url, `http://${req.headers.host}`);
+
       if (apiPath === "files" && method === "GET") {
         // List files in vault
-        const urlParams = new URL(url, `http://${req.headers.host}`);
         const path = urlParams.searchParams.get("path") || "";
 
         const result = path
@@ -332,18 +388,29 @@ export default class HTTPMCPPlugin extends Plugin {
 
         res.writeHead(200);
         res.end(JSON.stringify(result));
-      } else if (apiPath.startsWith("files/") && method === "GET") {
+      } else if (apiPath === "files/content" && method === "GET") {
         // Get file contents
-        const filepath = apiPath.substring(6); // Remove "files/" prefix
+        const filepath = urlParams.searchParams.get("filepath");
+        if (!filepath) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing filepath parameter" }));
+          return;
+        }
+
         const result = await this.getFileContents(filepath);
 
         res.writeHead(200);
         res.end(JSON.stringify(result));
-      } else if (apiPath.startsWith("files/") && method === "POST") {
+      } else if (apiPath === "files/append" && method === "POST") {
         // Append content to file
-        const filepath = apiPath.substring(6);
         const body = await this.readBody(req);
-        const { content } = JSON.parse(body);
+        const { filepath, content } = JSON.parse(body);
+
+        if (!filepath || !content) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing filepath or content" }));
+          return;
+        }
 
         await this.appendContent(filepath, content);
 
@@ -358,7 +425,7 @@ export default class HTTPMCPPlugin extends Plugin {
 
         res.writeHead(200);
         res.end(JSON.stringify(result));
-      } else if (apiPath === "patch" && method === "PATCH") {
+      } else if (apiPath === "patch" && method === "POST") {
         // Patch content
         const body = await this.readBody(req);
         const params = JSON.parse(body);
@@ -367,11 +434,16 @@ export default class HTTPMCPPlugin extends Plugin {
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, message: "Content patched" }));
-      } else if (apiPath.startsWith("files/") && method === "DELETE") {
+      } else if (apiPath === "files/delete" && method === "POST") {
         // Delete file
-        const filepath = apiPath.substring(6);
-        const urlParams = new URL(url, `http://${req.headers.host}`);
-        const confirm = urlParams.searchParams.get("confirm") === "true";
+        const body = await this.readBody(req);
+        const { filepath, confirm } = JSON.parse(body);
+
+        if (!filepath) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing filepath parameter" }));
+          return;
+        }
 
         if (!confirm) {
           res.writeHead(400);
@@ -783,16 +855,34 @@ export default class HTTPMCPPlugin extends Plugin {
       let newSectionContent: string;
       switch (operation) {
         case "append":
+          // Append: add to end of existing content, no leading newline needed
           newSectionContent = sectionContent + content;
           break;
         case "prepend":
-          newSectionContent = content + sectionContent;
+          // Prepend: ensure newline after heading if content doesn't start with one
+          newSectionContent =
+            (content.startsWith("\n") ? content : "\n" + content) +
+            sectionContent;
           break;
         case "replace":
-          newSectionContent = content;
+          // Replace: ensure newline after heading if content doesn't start with one
+          newSectionContent = content.startsWith("\n")
+            ? content
+            : "\n" + content;
           break;
         default:
           throw new Error(`Invalid operation: ${operation}`);
+      }
+
+      // If there's a next heading, ensure blank line before it for proper markdown formatting
+      if (nextHeadingMatch) {
+        // Ensure at least two newlines (blank line) before next heading
+        if (!newSectionContent.endsWith("\n")) {
+          newSectionContent += "\n\n";
+        } else if (!newSectionContent.endsWith("\n\n")) {
+          newSectionContent += "\n";
+        }
+        // If already ends with \n\n or more, do nothing
       }
 
       fileContent =
@@ -1364,6 +1454,37 @@ class HTTPMCPSettingTab extends PluginSettingTab {
               this.plugin.settings.rateLimitPerMinute = limit;
               await this.plugin.saveSettings();
             }
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "OpenAPI Schema Settings" });
+
+    new Setting(containerEl)
+      .setName("Enable OpenAPI Schema Endpoint")
+      .setDesc(
+        "Serve OpenAPI schema at /api/schema (no authentication required)",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableOpenAPISchema)
+          .onChange(async (value) => {
+            this.plugin.settings.enableOpenAPISchema = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("OpenAPI Schema Path")
+      .setDesc(
+        "Path to the OpenAPI schema file in your vault (e.g., openapi.yaml)",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("openapi.yaml")
+          .setValue(this.plugin.settings.openAPISchemaPath)
+          .onChange(async (value) => {
+            this.plugin.settings.openAPISchemaPath = value;
+            await this.plugin.saveSettings();
           }),
       );
 
