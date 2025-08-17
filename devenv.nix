@@ -47,7 +47,7 @@
   pre-commit.hooks = {
     prettier = {
       enable = true;
-      excludes = [ "main.js" "*.md" ];
+      excludes = [ "main\\.js" ".*\\.md" ];
     };
   };
 }
