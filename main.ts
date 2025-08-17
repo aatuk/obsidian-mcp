@@ -124,7 +124,10 @@ export default class HTTPMCPPlugin extends Plugin {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Key");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, X-API-Key, Authorization",
+    );
 
     if (req.method === "OPTIONS") {
       res.writeHead(200);
@@ -132,7 +135,15 @@ export default class HTTPMCPPlugin extends Plugin {
       return;
     }
 
-    const apiKey = req.headers["x-api-key"] as string;
+    // Support both X-API-Key and Authorization: Bearer token
+    let apiKey = req.headers["x-api-key"] as string;
+    if (!apiKey) {
+      const authHeader = req.headers["authorization"] as string;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        apiKey = authHeader.substring(7); // Remove "Bearer " prefix
+      }
+    }
+
     if (apiKey !== this.settings.apiKey) {
       res.writeHead(401);
       res.end(JSON.stringify({ error: "Unauthorized" }));
